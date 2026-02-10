@@ -18,7 +18,9 @@ class MainActivity : AppCompatActivity() {
 
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK && pendingConfig != null) {
-            startVpnService(pendingConfig!!)
+            val link = pendingConfig!!
+            val config = ConfigBuilder.buildFromSsLink(link)
+            if (config != null) startVpnService(config, link)
             pendingConfig = null
         } else if (pendingConfig != null) {
             Toast.makeText(this, "Нужно разрешить VPN для подключения", Toast.LENGTH_LONG).show()
@@ -26,7 +28,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private var pendingConfig: String? = null
+    private var pendingConfig: String? = null  // при ss:// храним ссылку
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,12 +58,12 @@ class MainActivity : AppCompatActivity() {
         if (link.startsWith("ss://")) {
             val config = ConfigBuilder.buildFromSsLink(link)
             if (config != null && hasLibV2ray()) {
-                pendingConfig = config
+                pendingConfig = link  // храним ссылку для передачи в сервис (и fallback при ошибке)
                 val intent = VpnService.prepare(this)
                 if (intent != null) {
                     vpnPermissionLauncher.launch(intent)
                 } else {
-                    startVpnService(config)
+                    startVpnService(config, link)
                 }
                 return
             }
@@ -97,11 +99,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startVpnService(config: String) {
+    private fun startVpnService(config: String, link: String) {
         startForegroundService(Intent(this, VpnServiceImpl::class.java).apply {
             putExtra(VpnServiceImpl.EXTRA_CONFIG, config)
+            putExtra(VpnServiceImpl.EXTRA_LINK, link)
         })
         Toast.makeText(this, "VPN запущен", Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Если сервис не смог запустить ядро — пришёл сюда с флагом, открываем v2rayNG
+        intent?.takeIf { it.getBooleanExtra(VpnServiceImpl.EXTRA_VPN_FAILED, false) }?.let { i ->
+            i.removeExtra(VpnServiceImpl.EXTRA_VPN_FAILED)
+            val link = i.getStringExtra(VpnServiceImpl.EXTRA_LINK)
+            Toast.makeText(this, "Встроенное ядро недоступно. Откройте v2rayNG — ссылка вставлена.", Toast.LENGTH_LONG).show()
+            if (!link.isNullOrBlank()) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("vpn_config", link))
+                val v2rayIntent = Intent(Intent.ACTION_VIEW).apply {
+                    data = Uri.parse("v2rayng://install-config/?url=${Uri.encode(link)}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                try { startActivity(v2rayIntent) } catch (_: Exception) {
+                    try { startActivity(Intent(Intent.ACTION_VIEW).setPackage("com.v2ray.ang").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+                }
+            }
+        }
     }
 }

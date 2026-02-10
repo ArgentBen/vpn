@@ -9,7 +9,10 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
+import android.os.Handler
+import android.os.Looper
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * VPN-сервис: поднимает TUN, передаёт трафик в ядро Xray (libv2ray.aar).
@@ -20,6 +23,8 @@ class VpnServiceImpl : VpnService() {
     private var tunFd: ParcelFileDescriptor? = null
     private var coreController: Any? = null
     private var stopCallback: (() -> Unit)? = null
+    private val coreRunning = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -33,8 +38,16 @@ class VpnServiceImpl : VpnService() {
             return START_NOT_STICKY
         }
         val config = intent?.getStringExtra(EXTRA_CONFIG) ?: return START_NOT_STICKY
+        val link = intent?.getStringExtra(EXTRA_LINK)
         startForeground(NOTIFICATION_ID, buildNotification())
-        startVpn(config)
+        try {
+            startVpn(config)
+        } catch (e: Throwable) {
+            e.printStackTrace()
+            notifyVpnFailed(link)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 
@@ -44,17 +57,21 @@ class VpnServiceImpl : VpnService() {
     }
 
     private fun startVpn(configJson: String) {
-        try {
-            val envPath = prepareAssets()
-            initCore(envPath)
-            val tun = establishTun()
-            tunFd = tun
-            val fd = tun?.fd?.toInt() ?: 0
-            startCore(configJson, fd)
-        } catch (e: Throwable) {
-            e.printStackTrace()
-            stopSelf()
+        val envPath = prepareAssets()
+        initCore(envPath)
+        val tun = establishTun()
+        tunFd = tun
+        val fd = tun?.fd?.toInt() ?: 0
+        startCore(configJson, fd)
+    }
+
+    private fun notifyVpnFailed(link: String?) {
+        val i = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(EXTRA_VPN_FAILED, true)
+            putExtra(EXTRA_LINK, link)
         }
+        startActivity(i)
     }
 
     private fun prepareAssets(): String {
@@ -99,18 +116,19 @@ class VpnServiceImpl : VpnService() {
         method.invoke(null, envPath, "")
     }
 
-    private fun startCore(configJson: String, tunFd: Int) {
-        val libName = listOf("libv2ray.Libv2ray", "go.libv2ray.Libv2ray").firstOrNull { name ->
+    private fun startCore(configJson: String, fd: Int) {
+        val link = intent?.getStringExtra(EXTRA_LINK)
+        val libName = listOf("go.libv2ray.Libv2ray", "libv2ray.Libv2ray").firstOrNull { name ->
             try { Class.forName(name); true } catch (_: ClassNotFoundException) { false }
         } ?: throw IllegalStateException("Добавьте libv2ray.aar в app/libs/ (см. README)")
-        val handlerName = listOf("libv2ray.CoreCallbackHandler", "go.libv2ray.CoreCallbackHandler").firstOrNull { name ->
+        val handlerName = listOf("go.libv2ray.CoreCallbackHandler", "libv2ray.CoreCallbackHandler").firstOrNull { name ->
             try { Class.forName(name); true } catch (_: ClassNotFoundException) { false }
         } ?: throw IllegalStateException("libv2ray.aar несовместим")
         val handlerClass = Class.forName(handlerName)
         val proxy = java.lang.reflect.Proxy.newProxyInstance(
             handlerClass.classLoader,
             arrayOf(handlerClass)
-        ) { _, method, args ->
+        ) { _, method, _ ->
             val name = method.name.lowercase()
             if (name == "startup" || name == "shutdown" || name.contains("emitstatus")) 0 else null
         }
@@ -119,13 +137,28 @@ class VpnServiceImpl : VpnService() {
         val controller = newController.invoke(null, proxy)
         coreController = controller
         stopCallback = {
+            coreRunning.set(false)
             try {
                 controller?.javaClass?.getMethod("stopLoop")?.invoke(controller)
             } catch (_: Throwable) {}
         }
         val startLoop = controller?.javaClass?.getMethod("startLoop", String::class.java, Int::class.javaPrimitiveType)
             ?: controller?.javaClass?.getMethod("startLoop", String::class.java, Int::class.java)
-        startLoop?.invoke(controller, configJson, tunFd)
+            ?: throw IllegalStateException("libv2ray.aar: метод startLoop не найден")
+        coreRunning.set(true)
+        Thread {
+            try {
+                startLoop.invoke(controller, configJson, fd)
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                if (coreRunning.getAndSet(false)) {
+                    mainHandler.post {
+                        notifyVpnFailed(link)
+                        stopSelf()
+                    }
+                }
+            }
+        }.start()
     }
 
     private fun stopVpn() {
@@ -174,6 +207,8 @@ class VpnServiceImpl : VpnService() {
     companion object {
         const val ACTION_DISCONNECT = "ru.vpnconfig.paste.DISCONNECT"
         const val EXTRA_CONFIG = "config_json"
+        const val EXTRA_LINK = "ss_link"
+        const val EXTRA_VPN_FAILED = "vpn_failed"
         private const val CHANNEL_ID = "vpn_channel"
         private const val NOTIFICATION_ID = 1
     }

@@ -34,6 +34,17 @@ jobs:
           unzip -q gradle.zip
           cd android-app && ../gradle-8.2/bin/gradle wrapper --no-daemon
 
+      - name: Download libv2ray.aar and assets (встроенное ядро VPN)
+        run: |
+          mkdir -p android-app/app/libs android-app/app/src/main/assets
+          AAR_URL=$(curl -s https://api.github.com/repos/2dust/AndroidLibXrayLite/releases/latest | grep "browser_download_url.*libv2ray\.aar" | head -1 | cut -d '"' -f 4)
+          if [ -n "$AAR_URL" ]; then
+            curl -sL "$AAR_URL" -o android-app/app/libs/libv2ray.aar
+            echo "Downloaded libv2ray.aar"
+          fi
+          curl -sL "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat" -o android-app/app/src/main/assets/geoip.dat || true
+          curl -sL "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat" -o android-app/app/src/main/assets/geosite.dat || true
+
       - name: Build APK
         run: |
           cd android-app
