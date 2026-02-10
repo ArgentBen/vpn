@@ -1,0 +1,70 @@
+# VPN Конфиг — приложение для Android
+
+Два варианта использования:
+
+---
+
+## Вариант 1: Один APK с встроенным ядром (как на ПК)
+
+Одно приложение: вставили ссылку **ss://** → нажали «Применить» → весь трафик телефона идёт через прокси. **v2rayNG не нужен.**
+
+### Что сделать перед сборкой
+
+1. **Скачайте libv2ray.aar** (ядро Xray/V2Ray для Android):
+   - Откройте [релизы AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite/releases/latest).
+   - Скачайте файл **libv2ray.aar**.
+   - Положите его в папку **`android-app/app/libs/`** (создайте папку `libs`, если её нет).
+
+2. **Скачайте ассеты** (для маршрутизации по гео):
+   - Возьмите [v2ray-extra.zip](https://github.com/v2fly/v2ray-core/releases) из любого релиза v2fly/v2ray-core (или из [Xray](https://github.com/XTLS/Xray-core/releases)).
+   - В архиве есть **geoip.dat** и **geosite.dat**.
+   - Положите их в **`android-app/app/src/main/assets/`** (папку `assets` создайте, если нет).
+
+3. Соберите APK в Android Studio: **File → Open** → папка `android-app` → **Build → Build APK(s)**.  
+   Готовый файл: `app/build/outputs/apk/debug/app-debug.apk`.
+
+Если **libs/** или **assets/** не подготовлены, приложение соберётся, но при нажатии «Подключить» для ss:// будет открывать v2rayNG (как в варианте 2).
+
+---
+
+## Вариант 2: Без ядра — только передача конфига в v2rayNG
+
+Если не класть **libv2ray.aar** в `app/libs/`, приложение работает как раньше: вставляете ссылку → «Применить» → конфиг копируется в буфер и открывается **v2rayNG**. Дальше в v2rayNG нужно включить VPN.
+
+1. Установите [v2rayNG](https://github.com/2dust/v2rayNG/releases) (или из Google Play).
+2. Установите собранный **VPN Конфиг**.
+3. Вставьте ссылку (ss://, vmess:// и т.д.) и нажмите «Применить».
+4. В v2rayNG включите подключение — весь трафик пойдёт через прокси.
+
+---
+
+## Как пользоваться (один APK с ядром)
+
+1. Установите собранный APK на телефон.
+2. Откройте приложение, вставьте ссылку **ss://** (поддерживается в первую очередь).
+3. Нажмите **«Применить»**. При первом запуске разрешите создание VPN-подключения.
+4. VPN включится, трафик пойдёт через прокси. Отключение — через уведомление «Отключить».
+
+---
+
+## Как собрать APK
+
+1. Установите [Android Studio](https://developer.android.com/studio).
+2. **File → Open** → выберите папку **android-app**.
+3. (Опционально) Положите **libv2ray.aar** в `app/libs/` и **geoip.dat**, **geosite.dat** в `app/src/main/assets/` для варианта «один APK».
+4. **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
+5. APK: **app/build/outputs/apk/debug/app-debug.apk**.
+
+Командная строка (если настроен SDK):
+
+```bash
+cd android-app
+./gradlew assembleDebug
+```
+
+---
+
+## Поддерживаемые ссылки
+
+- **ss://** — Shadowsocks (при наличии libv2ray.aar подключается встроенным ядром).
+- **vmess://**, **vless://**, **trojan://** — передаются в v2rayNG (импорт из буфера).

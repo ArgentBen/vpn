@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VPN Конфиг</string>
+    <string name="hint_link">Вставьте ссылку: ss://, vmess://, http://...</string>
+    <string name="btn_apply">Применить</string>
+    <string name="toast_copied">Скопировано. Откройте v2rayNG → + → Импорт из буфера</string>
+    <string name="toast_open_v2ray">Откройте v2rayNG и включите подключение</string>
+    <string name="toast_need_link">Вставьте ссылку конфига</string>
+    <string name="toast_no_app">Установите v2rayNG для применения конфига</string>
+</resources>
