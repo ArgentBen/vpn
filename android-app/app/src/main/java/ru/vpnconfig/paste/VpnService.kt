@@ -41,7 +41,7 @@ class VpnServiceImpl : VpnService() {
         val link = intent?.getStringExtra(EXTRA_LINK)
         startForeground(NOTIFICATION_ID, buildNotification())
         try {
-            startVpn(config)
+            startVpn(config, link)
         } catch (e: Throwable) {
             e.printStackTrace()
             notifyVpnFailed(link)
@@ -56,13 +56,13 @@ class VpnServiceImpl : VpnService() {
         super.onDestroy()
     }
 
-    private fun startVpn(configJson: String) {
+    private fun startVpn(configJson: String, link: String?) {
         val envPath = prepareAssets()
         initCore(envPath)
         val tun = establishTun()
         tunFd = tun
         val fd = tun?.fd?.toInt() ?: 0
-        startCore(configJson, fd)
+        startCore(configJson, fd, link)
     }
 
     private fun notifyVpnFailed(link: String?) {
@@ -116,8 +116,7 @@ class VpnServiceImpl : VpnService() {
         method.invoke(null, envPath, "")
     }
 
-    private fun startCore(configJson: String, fd: Int) {
-        val link = intent?.getStringExtra(EXTRA_LINK)
+    private fun startCore(configJson: String, fd: Int, link: String?) {
         val libName = listOf("go.libv2ray.Libv2ray", "libv2ray.Libv2ray").firstOrNull { name ->
             try { Class.forName(name); true } catch (_: ClassNotFoundException) { false }
         } ?: throw IllegalStateException("Добавьте libv2ray.aar в app/libs/ (см. README)")
