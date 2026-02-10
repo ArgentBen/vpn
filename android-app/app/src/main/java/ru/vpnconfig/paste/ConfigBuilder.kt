@@ -39,13 +39,7 @@ object ConfigBuilder {
         return """
 {
   "log": { "loglevel": "warning" },
-  "inbounds": [{
-    "tag": "socks-in",
-    "listen": "127.0.0.1",
-    "port": 1080,
-    "protocol": "socks",
-    "settings": { "auth": "noauth", "udp": false }
-  }],
+  "inbounds": [],
   "outbounds": [{
     "protocol": "shadowsocks",
     "settings": {

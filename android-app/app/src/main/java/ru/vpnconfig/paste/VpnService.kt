@@ -108,11 +108,12 @@ class VpnServiceImpl : VpnService() {
     }
 
     private fun initCore(envPath: String) {
-        val libName = listOf("libv2ray.Libv2ray", "go.libv2ray.Libv2ray").firstOrNull { name ->
+        val libName = listOf("go.libv2ray.Libv2ray", "libv2ray.Libv2ray").firstOrNull { name ->
             try { Class.forName(name); true } catch (_: ClassNotFoundException) { false }
         } ?: throw IllegalStateException("Добавьте libv2ray.aar в app/libs/ (см. README)")
         val libClass = Class.forName(libName)
-        val method = libClass.getMethod("initCoreEnv", String::class.java, String::class.java)
+        val method = libClass.methods.firstOrNull { it.name.equals("initCoreEnv", ignoreCase = true) && it.parameterCount == 2 }
+            ?: throw IllegalStateException("libv2ray.aar: initCoreEnv не найден")
         method.invoke(null, envPath, "")
     }
 
@@ -127,9 +128,9 @@ class VpnServiceImpl : VpnService() {
         val proxy = java.lang.reflect.Proxy.newProxyInstance(
             handlerClass.classLoader,
             arrayOf(handlerClass)
-        ) { _, method, _ ->
-            val name = method.name.lowercase()
-            if (name == "startup" || name == "shutdown" || name.contains("emitstatus")) 0 else null
+        ) { _, method, args ->
+            val ret = method.returnType
+            if (ret == Int::class.javaPrimitiveType || ret == Int::class.java) 0 else null
         }
         val libClass = Class.forName(libName)
         val newController = libClass.getMethod("newCoreController", handlerClass)
@@ -141,9 +142,9 @@ class VpnServiceImpl : VpnService() {
                 controller?.javaClass?.getMethod("stopLoop")?.invoke(controller)
             } catch (_: Throwable) {}
         }
-        val startLoop = controller?.javaClass?.getMethod("startLoop", String::class.java, Int::class.javaPrimitiveType)
-            ?: controller?.javaClass?.getMethod("startLoop", String::class.java, Int::class.java)
-            ?: throw IllegalStateException("libv2ray.aar: метод startLoop не найден")
+        val startLoop = controller?.javaClass?.methods?.firstOrNull { m ->
+            m.name == "startLoop" && m.parameterCount == 2 && m.parameterTypes.getOrNull(0) == String::class.java
+        } ?: throw IllegalStateException("libv2ray.aar: метод startLoop не найден")
         coreRunning.set(true)
         Thread {
             try {
