@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Клиент для обхода блокировок — подключение к прокси/VPN (SOCKS5/HTTP).
+Клиент для обхода блокировок — подключение по ссылке (ss://) или вручную (SOCKS5/HTTP).
 """
 import json
 import threading
@@ -8,7 +8,9 @@ import tkinter as tk
 from pathlib import Path
 
 import customtkinter as ctk
+from config_builder import build_from_ss_link
 from proxy_manager import (
+    LOCAL_PROXY_HOST,
     LOCAL_PROXY_PORT,
     ProxyProcess,
     build_remote_url,
@@ -16,8 +18,11 @@ from proxy_manager import (
     get_system_proxy_status,
     set_system_proxy,
 )
+from app_dir import BASE_DIR
+from v2ray_runner import is_running as v2ray_is_running, start as v2ray_start, stop as v2ray_stop
 
-PROFILES_FILE = Path(__file__).parent / "profiles.json"
+PROFILES_FILE = BASE_DIR / "profiles.json"
+LAST_LINK_FILE = BASE_DIR / "last_link.txt"
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -26,11 +31,12 @@ class VPNClientApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Обход блокировок — Прокси-клиент")
-        self.geometry("480x520")
-        self.minsize(400, 420)
+        self.geometry("480x600")
+        self.minsize(400, 500)
 
         self.proxy_process = ProxyProcess(local_port=LOCAL_PROXY_PORT)
         self.connected = False
+        self.connected_via_v2ray = False  # True = по ссылке (V2Ray), False = форма (pproxy)
         self.profiles = self._load_profiles()
 
         self._build_ui()
@@ -55,18 +61,55 @@ class VPNClientApp(ctk.CTk):
         # Заголовок
         title = ctk.CTkLabel(
             self,
-            text="Подключение к прокси",
+            text="Обход блокировок",
             font=ctk.CTkFont(size=22, weight="bold"),
         )
         title.pack(pady=(20, 8))
 
+        # --- Подключение по ссылке (ss://) — V2Ray ---
+        link_frame = ctk.CTkFrame(self, fg_color="transparent")
+        link_frame.pack(fill="x", padx=24, pady=(0, 8))
+        ctk.CTkLabel(
+            link_frame,
+            text="По ссылке (ss://) — весь ПК через V2Ray",
+            font=ctk.CTkFont(weight="bold"),
+        ).pack(anchor="w")
+        link_row = ctk.CTkFrame(link_frame, fg_color="transparent")
+        link_row.pack(fill="x", pady=(4, 6))
+        self.link_entry = ctk.CTkEntry(
+            link_row,
+            placeholder_text="Вставьте ссылку ss://...",
+            height=36,
+        )
+        self.link_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(
+            link_row,
+            text="Вставить",
+            width=90,
+            height=36,
+            command=self._paste_into_link_entry,
+        ).pack(side="right")
+        self.link_entry.bind("<Control-v>", self._paste_into_link_entry)
+        self.link_entry.bind("<Button-3>", self._show_link_paste_menu)
+        self.bind("<Control-V>", self._on_global_paste)
+        self.bind("<Control-v>", self._on_global_paste)
+        link_btn_frame = ctk.CTkFrame(link_frame, fg_color="transparent")
+        link_btn_frame.pack(fill="x", pady=(0, 16))
+        self.link_connect_btn = ctk.CTkButton(
+            link_btn_frame,
+            text="Подключить по ссылке",
+            width=180,
+            command=self._toggle_link_connection,
+        )
+        self.link_connect_btn.pack(side="left", padx=(0, 8))
+
         subtitle = ctk.CTkLabel(
             self,
-            text="SOCKS5 или HTTP — трафик пойдёт через выбранный сервер",
+            text="Или укажите сервер вручную (SOCKS5/HTTP)",
             font=ctk.CTkFont(size=12),
             text_color="gray",
         )
-        subtitle.pack(pady=(0, 20))
+        subtitle.pack(pady=(0, 12))
 
         frame = ctk.CTkFrame(self, fg_color="transparent")
         frame.pack(fill="x", padx=24, pady=0)
@@ -141,7 +184,58 @@ class VPNClientApp(ctk.CTk):
         )
         self.status_label.pack(pady=12)
 
+        self._load_last_link()
         self._update_status_from_system()
+        self.after(100, self._focus_link_entry)
+
+    def _focus_link_entry(self):
+        self.update_idletasks()
+        self.focus_force()
+        try:
+            self.link_entry.focus_set()
+            self.link_entry.focus_force()
+        except Exception:
+            pass
+
+    def _paste_into_link_entry(self, event=None):
+        try:
+            text = self.clipboard_get()
+            if text and self.link_entry.get() != text:
+                self.link_entry.delete(0, tk.END)
+                self.link_entry.insert(0, text.strip())
+        except Exception:
+            pass
+        return "break"
+
+    def _on_global_paste(self, event=None):
+        """Ctrl+V в любом месте окна — вставить в поле ссылки."""
+        self._paste_into_link_entry()
+        return "break"
+
+    def _show_link_paste_menu(self, event):
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Вставить", command=lambda: self._paste_into_link_entry())
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _load_last_link(self):
+        try:
+            if LAST_LINK_FILE.exists():
+                text = LAST_LINK_FILE.read_text(encoding="utf-8").strip()
+                if text and text.startswith("ss://"):
+                    self.link_entry.delete(0, tk.END)
+                    self.link_entry.insert(0, text)
+        except Exception:
+            pass
+
+    def _save_last_link(self, link: str):
+        try:
+            if link and link.strip().startswith("ss://"):
+                LAST_LINK_FILE.write_text(link.strip(), encoding="utf-8")
+        except Exception:
+            pass
 
     def _on_profile_select(self, choice):
         if not choice:
@@ -198,6 +292,57 @@ class VPNClientApp(ctk.CTk):
         self.profile_var.set("")
         self.status_label.configure(text="Профиль удалён")
 
+    def _connect_by_link(self):
+        """Подключиться по вставленной ссылке ss:// через V2Ray."""
+        link = self.link_entry.get().strip()
+        if not link:
+            self.status_label.configure(text="Вставьте ссылку ss://")
+            return
+        config_json = build_from_ss_link(link)
+        if not config_json:
+            self.status_label.configure(text="Неверный формат ссылки. Нужна ss://...")
+            return
+        self._save_last_link(link)
+        self.link_connect_btn.configure(state="disabled", text="Запуск...")
+        self.status_label.configure(text="Запуск V2Ray...")
+
+        def do_start():
+            ok = v2ray_start(config_json)
+            self.after(0, lambda: self._on_link_connect_done(ok))
+
+        threading.Thread(target=do_start, daemon=True).start()
+
+    def _on_link_connect_done(self, ok: bool):
+        if not ok:
+            self.link_connect_btn.configure(state="normal", text="Подключить по ссылке")
+            self.status_label.configure(
+                text="Ошибка запуска V2Ray. Проверьте папку v2ray и v2ray.exe"
+            )
+            return
+        set_ok = set_system_proxy(LOCAL_PROXY_HOST, LOCAL_PROXY_PORT)
+        if set_ok:
+            self.connected = True
+            self.connected_via_v2ray = True
+            self.link_connect_btn.configure(
+                state="normal", text="Отключить", fg_color="#c0392b"
+            )
+            self.connect_btn.configure(state="disabled")
+            self.status_label.configure(text="Подключено по ссылке — трафик через V2Ray")
+        else:
+            v2ray_stop()
+            self.link_connect_btn.configure(state="normal", text="Подключить по ссылке")
+            self.status_label.configure(text="Ошибка настройки системного прокси")
+
+    def _disconnect_by_link(self):
+        """Отключить подключение по ссылке (V2Ray)."""
+        v2ray_stop()
+        self.connected_via_v2ray = False
+        self.link_connect_btn.configure(
+            text="Подключить по ссылке", fg_color=["#3B8ED0", "#1F6AA5"]
+        )
+        self.connect_btn.configure(state="normal")
+        self.status_label.configure(text="Отключено")
+
     def _get_remote_url(self):
         host = self.host_entry.get().strip()
         port_str = self.port_entry.get().strip()
@@ -215,6 +360,15 @@ class VPNClientApp(ctk.CTk):
             self._disconnect()
         else:
             self._connect()
+
+    def _toggle_link_connection(self):
+        """Подключить по ссылке или отключить (кнопка «Отключить»)."""
+        if self.connected and self.connected_via_v2ray:
+            clear_system_proxy()
+            self._disconnect_by_link()
+            self.connected = False
+            return
+        self._connect_by_link()
 
     def _connect(self):
         host = self.host_entry.get().strip()
@@ -247,6 +401,7 @@ class VPNClientApp(ctk.CTk):
         if set_ok:
             self.connected = True
             self.connect_btn.configure(state="normal", text="Отключиться", fg_color="#c0392b")
+            self.link_connect_btn.configure(state="disabled")
             self.status_label.configure(text="Подключено — трафик идёт через прокси")
         else:
             self.proxy_process.stop()
@@ -255,16 +410,32 @@ class VPNClientApp(ctk.CTk):
 
     def _disconnect(self):
         clear_system_proxy()
-        self.proxy_process.stop()
+        if self.connected_via_v2ray:
+            v2ray_stop()
+            self.link_connect_btn.configure(
+                text="Подключить по ссылке", fg_color=["#3B8ED0", "#1F6AA5"]
+            )
+            self.connect_btn.configure(state="normal")
+        else:
+            self.proxy_process.stop()
         self.connected = False
+        self.connected_via_v2ray = False
+        self.link_connect_btn.configure(state="normal")
         self.connect_btn.configure(text="Подключиться", fg_color=["#3B8ED0", "#1F6AA5"])
         self.status_label.configure(text="Отключено")
 
     def _update_status_from_system(self):
         enabled, server = get_system_proxy_status()
         if enabled and server and server.startswith(f"{LOCAL_PROXY_HOST}:{LOCAL_PROXY_PORT}"):
-            if self.proxy_process.is_running():
+            if v2ray_is_running():
                 self.connected = True
+                self.connected_via_v2ray = True
+                self.link_connect_btn.configure(text="Отключить", fg_color="#c0392b")
+                self.connect_btn.configure(state="disabled")
+                self.status_label.configure(text="Подключено по ссылке — трафик через V2Ray")
+            elif self.proxy_process.is_running():
+                self.connected = True
+                self.link_connect_btn.configure(state="disabled")
                 self.connect_btn.configure(text="Отключиться", fg_color="#c0392b")
                 self.status_label.configure(text="Подключено — трафик идёт через прокси")
             else:
@@ -272,7 +443,11 @@ class VPNClientApp(ctk.CTk):
 
     def on_closing(self):
         if self.connected:
-            self._disconnect()
+            clear_system_proxy()
+            if self.connected_via_v2ray:
+                v2ray_stop()
+            else:
+                self.proxy_process.stop()
         self.destroy()
 
 

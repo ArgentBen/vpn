@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.VpnService
 import android.net.Uri
 import android.os.Bundle
@@ -15,6 +16,7 @@ import ru.vpnconfig.paste.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private lateinit var prefs: SharedPreferences
 
     private val vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK && pendingConfig != null) {
@@ -34,9 +36,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        prefs = getSharedPreferences("vpn_config", Context.MODE_PRIVATE)
 
         intent?.data?.toString()?.let { link ->
             binding.etLink.setText(link)
+        } ?: run {
+            prefs.getString("last_link", null)?.takeIf { it.isNotBlank() }?.let {
+                binding.etLink.setText(it)
+            }
         }
 
         binding.btnApply.setOnClickListener { applyOrConnect() }
@@ -56,6 +63,7 @@ class MainActivity : AppCompatActivity() {
 
         // Пробуем собрать конфиг и подключиться встроенным ядром (если есть libv2ray.aar)
         if (link.startsWith("ss://")) {
+            saveLastLink(link)
             val config = ConfigBuilder.buildFromSsLink(link)
             if (config != null && hasLibV2ray()) {
                 pendingConfig = link  // храним ссылку для передачи в сервис (и fallback при ошибке)
@@ -91,12 +99,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hasLibV2ray(): Boolean {
-        return try {
-            Class.forName("libv2ray.Libv2ray")
-            true
-        } catch (_: ClassNotFoundException) {
-            false
+        return listOf("go.libv2ray.Libv2ray", "libv2ray.Libv2ray").any { name ->
+            try {
+                Class.forName(name)
+                true
+            } catch (_: ClassNotFoundException) {
+                false
+            }
         }
+    }
+
+    private fun saveLastLink(link: String) {
+        prefs.edit().putString("last_link", link.trim()).apply()
     }
 
     private fun startVpnService(config: String, link: String) {
