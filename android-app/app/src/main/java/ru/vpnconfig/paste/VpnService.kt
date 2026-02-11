@@ -145,10 +145,12 @@ class VpnServiceImpl : VpnService() {
         val startLoop = controller?.javaClass?.methods?.firstOrNull { m ->
             m.name == "startLoop" && m.parameterCount == 2 && m.parameterTypes.getOrNull(0) == String::class.java
         } ?: throw IllegalStateException("libv2ray.aar: метод startLoop не найден")
+        val param1 = configJson
+        val param2 = if (startLoop.parameterTypes.getOrNull(1) == Integer::class.java) Integer.valueOf(fd) else fd
         coreRunning.set(true)
         Thread {
             try {
-                startLoop.invoke(controller, configJson, fd)
+                startLoop.invoke(controller, param1, param2)
             } catch (e: Throwable) {
                 e.printStackTrace()
                 if (coreRunning.getAndSet(false)) {
