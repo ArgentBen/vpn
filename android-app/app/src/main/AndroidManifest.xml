@@ -29,9 +29,12 @@
                 <data android:scheme="trojan" />
             </intent-filter>
         </activity>
+        <!-- Отдельный процесс :vpn — при падении нативного кода (libv2ray) не убивает основное приложение -->
         <service
             android:name=".VpnServiceImpl"
             android:exported="false"
+            android:process=":vpn"
+            android:foregroundServiceType="specialUse"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />

@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.Executors
 
 /**
  * VPN-сервис: поднимает TUN, передаёт трафик в ядро Xray (libv2ray.aar).
@@ -25,6 +26,7 @@ class VpnServiceImpl : VpnService() {
     private var stopCallback: (() -> Unit)? = null
     private val coreRunning = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
         super.onCreate()
@@ -39,20 +41,30 @@ class VpnServiceImpl : VpnService() {
         }
         val config = intent?.getStringExtra(EXTRA_CONFIG) ?: return START_NOT_STICKY
         val link = intent?.getStringExtra(EXTRA_LINK)
-        startForeground(NOTIFICATION_ID, buildNotification())
-        try {
-            startVpn(config, link)
-        } catch (e: Throwable) {
-            e.printStackTrace()
-            notifyVpnFailed(link)
-            stopSelf()
-            return START_NOT_STICKY
+        // Android 14+ требует тип при startForeground
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, buildNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
+        // Тяжёлая работа (TUN, libv2ray) в фоне — при нативном краше падает только процесс :vpn
+        executor.execute {
+            try {
+                startVpn(config, link)
+            } catch (e: Throwable) {
+                e.printStackTrace()
+                mainHandler.post {
+                    notifyVpnFailed(link)
+                    stopSelf()
+                }
+            }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
         stopVpn()
+        executor.shutdown()
         super.onDestroy()
     }
 
